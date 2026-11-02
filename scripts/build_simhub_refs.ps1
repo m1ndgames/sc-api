@@ -49,7 +49,10 @@ $core = @('mscorlib.dll', 'System.dll', 'System.Core.dll') |
 function Build-Facade {
     param([string]$Source, [string]$Name, [string[]]$Refs)
     $out = Join-Path $outFull $Name
-    $refArgs = ($core + $Refs) | ForEach-Object { "/reference:`"$_`"" }
+    # NOT quoted: each element is one argument already, and PowerShell 7
+    # passes embedded quotes through to the process literally (unlike 5.1),
+    # which turns a perfectly good path into one csc cannot open.
+    $refArgs = ($core + $Refs) | ForEach-Object { "/reference:$_" }
     # /nostdlib+ so mscorlib comes from the reference assemblies, not from the
     # runtime csc happens to be running on.
     $cscArgs = @('/nologo', '/target:library', '/nostdlib+', "/langversion:$LangVersion",

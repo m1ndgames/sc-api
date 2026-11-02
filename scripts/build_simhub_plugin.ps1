@@ -106,7 +106,10 @@ using System.Reflection;
 [assembly: AssemblyInformationalVersion("$Version")]
 "@ | Set-Content -Path $asmInfo -Encoding UTF8
 
-$refArgs = ($fwRefs + $shRefs) | ForEach-Object { "/reference:`"$_`"" }
+# NOT quoted: each element is one argument already, and PowerShell 7 passes
+# embedded quotes through to the process literally (unlike 5.1). Paths with
+# spaces are quoted by the shell as it builds the command line.
+$refArgs = ($fwRefs + $shRefs) | ForEach-Object { "/reference:$_" }
 
 $cscArgs = @(
     '/nologo', '/target:library', '/optimize+', '/warn:3', '/nostdlib+',
