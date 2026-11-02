@@ -24,7 +24,8 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'common.ps1')
 
-$csc = Resolve-Csc $Csc
+$LangVersion = '7.3'
+$csc = Resolve-Csc -Explicit $Csc -LanguageVersion $LangVersion
 $fw = Resolve-FrameworkDir $FrameworkDir
 
 if (-not (Test-Path $Log4Net)) { throw "log4net not found: $Log4Net" }
@@ -51,9 +52,9 @@ function Build-Facade {
     $refArgs = ($core + $Refs) | ForEach-Object { "/reference:`"$_`"" }
     # /nostdlib+ so mscorlib comes from the reference assemblies, not from the
     # runtime csc happens to be running on.
-    $cscArgs = @('/nologo', '/target:library', '/nostdlib+', '/langversion:7.3',
+    $cscArgs = @('/nologo', '/target:library', '/nostdlib+', "/langversion:$LangVersion",
                  "/out:$out") + $refArgs + @((Join-Path $root $Source))
-    & $csc $cscArgs
+    Invoke-Csc -Csc $csc -Arguments $cscArgs
     if ($LASTEXITCODE -ne 0) { throw "csc failed building $Name (exit $LASTEXITCODE)" }
     Write-Output ("  facade {0,-24} {1,8:N0} bytes" -f $Name, (Get-Item $out).Length)
 }

@@ -52,7 +52,8 @@ reference facades first:
 '@
 }
 
-$csc = Resolve-Csc $Csc
+$LangVersion = '7.3'
+$csc = Resolve-Csc -Explicit $Csc -LanguageVersion $LangVersion
 $fw = Resolve-FrameworkDir $FrameworkDir
 
 if (-not $Version) {
@@ -109,14 +110,14 @@ $refArgs = ($fwRefs + $shRefs) | ForEach-Object { "/reference:`"$_`"" }
 
 $cscArgs = @(
     '/nologo', '/target:library', '/optimize+', '/warn:3', '/nostdlib+',
-    '/langversion:7.3',
+    "/langversion:$LangVersion",
     "/out:$out"
 ) + $refArgs + @(
     (Join-Path $root 'simhub\ScApiPlugin.cs'),
     $asmInfo
 )
 
-& $csc $cscArgs
+Invoke-Csc -Csc $csc -Arguments $cscArgs
 if ($LASTEXITCODE -ne 0) { throw "csc failed with exit code $LASTEXITCODE" }
 
 $dll = Get-Item $out
