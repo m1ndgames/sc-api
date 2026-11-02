@@ -1,0 +1,37 @@
+# --- local environment -------------------------------------------------
+.venv/
+.idea/
+__pycache__/
+*.pyc
+
+# --- build output ------------------------------------------------------
+build/
+dist/
+*.obj
+*.exp
+*.lib
+
+# --- secrets / generated identity --------------------------------------
+# Regenerate with: sh scripts/make_cert.sh
+certs/*.key
+certs/*.crt
+
+# --- captures (large, and contain session-specific telemetry) ----------
+captures/
+*.jsonl
+*.log
+
+# --- D-BOX's own files: NOT ours to redistribute -----------------------
+# vendor/livemotion-connector/ is a place to keep your own copy of the genuine,
+# D-BOX-signed connector, so that the D-BOX software can be uninstalled
+# afterwards. NOTHING of D-BOX's is committed -- not the DLL, not their config
+# files, not their certificate. Only this project's own README is tracked there,
+# and it documents what the files contain.
+#
+# BACK THAT DIRECTORY UP BEFORE UNINSTALLING D-BOX: the uninstaller deletes the
+# originals and nothing here can regenerate dbxLive64.dll.
+vendor/livemotion-connector/*
+!vendor/livemotion-connector/README.md
+
+# --- the user's own SimHub settings ------------------------------------
+simhub/profile-backups/

@@ -1,0 +1,241 @@
+// LiveMotion.proto
+//
+// Reconstructed from the protobuf FileDescriptorProto embedded in
+//   C:\Program Files\D-BOX\Motion Engine\MotionEngine.exe  (MotionEngine v6.12.0)
+//   offset 17045568, length 4209 bytes
+//
+// Field numbers, wire types, enum values and the service definition are taken
+// verbatim from that descriptor -- they are observed, not inferred.
+// Run tools/extract_descriptor.py to re-extract and verify fidelity.
+//
+// Caveats (not recoverable from a descriptor):
+//   * Field numbers 4,5,6 of IdentificationResponse are absent from the
+//     descriptor. They were presumably removed during development. The gaps are
+//     preserved here deliberately -- do not renumber.
+//   * LiveMotionRequest's payload fields (10..23) behave like a oneof but are
+//     NOT declared as one. Descriptors record real oneofs explicitly and this
+//     file has none, so they are plain optional fields.
+//   * The numeric eventMeaning / FieldDefinition.meaning constants live in the
+//     D-BOX SDK headers, not in the schema. They arrive as opaque integers.
+
+syntax = "proto3";
+
+package dbox.proto.v1;
+
+enum ClientType {
+  Default = 0;
+  UniversalHaptiCode = 1;
+  LiveMotionGame = 2;
+}
+
+message ClientInfo {
+  string client_id = 1;
+  ClientType client_type = 2;
+}
+
+message IdentificationRequest {
+  ClientInfo client_info = 1;
+  string client_version = 2;
+}
+
+message IdentificationResponse {
+  string server_id = 1;
+  string server_name = 2;
+  string server_version = 3;
+  // 4,5,6 absent in the original descriptor -- intentionally skipped.
+  repeated ClientType supported_client_types = 7;
+  bool single_client_mode = 8;
+  int32 current_client_count = 9;
+}
+
+// ---------------------------------------------------------------- primitives
+
+message XYZ_StructFloat32 {
+  float x = 1;
+  float y = 2;
+  float z = 3;
+}
+
+message XYZ_StructFloat64 {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+}
+
+message QuadInt32 {
+  int32 frontLeft = 1;
+  int32 frontRight = 2;
+  int32 backLeft = 3;
+  int32 backRight = 4;
+}
+
+message QuadFloat32 {
+  float frontLeft = 1;
+  float frontRight = 2;
+  float backLeft = 3;
+  float backRight = 4;
+}
+
+message QuadFloat64 {
+  double frontLeft = 1;
+  double frontRight = 2;
+  double backLeft = 3;
+  double backRight = 4;
+}
+
+// ------------------------------------------------------- event schema + data
+
+// Describes the shape of one event type. Sent by the client via RegisterEvent
+// before any instance of that event is posted, which is why no struct offsets
+// ever need to be hardcoded by a server.
+message EventDefinition {
+  uint32 eventKey = 1;
+  uint32 eventMeaning = 2;
+  uint32 fieldCount = 3;
+  uint64 fieldAddress = 4;
+  repeated FieldDefinition fieldDef = 5;
+}
+
+message FieldDefinition {
+  uint32 type = 1;
+  uint32 flags = 2;
+  uint32 meaning = 3;
+  uint32 offset = 4;
+}
+
+// A single value. Acts as a union: exactly one data* field is expected to be
+// set, selected by the corresponding FieldDefinition.type.
+message EventField {
+  int32 dataInt32 = 1;
+  int64 dataInt64 = 2;
+  float dataFloat32 = 3;
+  double dataFloat64 = 4;
+  string dataString = 5;
+  bytes dataWideString = 6;
+  XYZ_StructFloat32 dataFloat32XYZ = 7;
+  XYZ_StructFloat64 dataFloat64XYZ = 8;
+  QuadInt32 dataQuadInt32 = 9;
+  QuadFloat32 dataQuadFloat32 = 10;
+  QuadFloat64 dataQuadFloat64 = 11;
+}
+
+message EventData {
+  repeated EventField eventField = 1;
+}
+
+message EventInfo {
+  uint32 eventKey = 1;
+  repeated EventData eventData = 2;
+  uint64 size = 3;
+  uint64 count = 4;
+}
+
+// ------------------------------------------------------------ call parameters
+
+message InitializeParam {
+  string appKey = 1;
+  uint32 appVersion = 2;
+  string apiKey = 3;
+}
+
+message TerminateParam {}
+message OpenParam {}
+message CloseParam {}
+message StartParam {}
+message StopParam {}
+message ResetStateParam {}
+
+message RegisterEventParam {
+  EventDefinition eventDefinition = 1;
+}
+
+message PostEventParam {
+  EventInfo eventInfo = 1;
+}
+
+message PostEventToSessionParam {
+  uint32 targetSession = 1;
+  EventInfo eventInfo = 2;
+}
+
+message SetOpenExtraSessionsParam {
+  uint32 additionalSessions = 1;
+}
+
+message PostEventsParam {
+  EventInfo eventInfo = 1;
+  uint32 eventBufferedCount = 2;
+}
+
+message PostEventsToSessionParam {
+  uint32 targetSession = 1;
+  EventInfo eventInfo = 2;
+  uint32 eventBufferedCount = 3;
+}
+
+message HeartbeatParam {
+  uint64 client_timestamp = 1;
+}
+
+// ----------------------------------------------------------------- envelopes
+
+message Reply {
+  int32 liveMotionResult = 1;
+}
+
+message PostEventsReply {
+  int32 liveMotionResult = 1;
+  uint32 eventBufferedCount = 2;
+}
+
+message HeartbeatResponse {
+  uint64 server_timestamp = 1;
+  uint64 client_timestamp = 2;
+  int32 connected_clients = 3;
+}
+
+message ServerNotification {
+  string notification_type = 1;
+  string affected_client_id = 2;
+  string details = 3;
+}
+
+message LiveMotionRequest {
+  ClientInfo client_info = 1;
+  // 2 absent in the original descriptor.
+  uint64 request_id = 3;
+  uint64 timestamp = 4;
+
+  InitializeParam initialize = 10;
+  TerminateParam terminate = 11;
+  OpenParam open = 12;
+  CloseParam close = 13;
+  StartParam start = 14;
+  StopParam stop = 15;
+  RegisterEventParam register_event = 16;
+  SetOpenExtraSessionsParam set_open_extra_sessions = 17;
+  ResetStateParam reset_state = 18;
+  PostEventParam post_event = 19;
+  PostEventToSessionParam post_event_to_session = 20;
+  PostEventsParam post_events = 21;
+  PostEventsToSessionParam post_events_to_session = 22;
+  HeartbeatParam heartbeat = 23;
+}
+
+message LiveMotionResponse {
+  string client_id = 1;
+  uint64 request_id = 2;
+  uint64 timestamp = 3;
+  int32 result_code = 4;
+  string message = 5;
+
+  Reply reply = 10;
+  PostEventsReply post_events_reply = 11;
+  HeartbeatResponse heartbeat_response = 12;
+  ServerNotification server_notification = 13;
+}
+
+service LiveMotion {
+  rpc GetIdentification(IdentificationRequest) returns (IdentificationResponse);
+  rpc LiveMotionStream(stream LiveMotionRequest) returns (stream LiveMotionResponse);
+}

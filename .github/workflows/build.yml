@@ -1,0 +1,239 @@
+# Builds the two release artifacts: the sc-api server executable and the SimHub
+# plugin. Both are built on Windows, because both target Windows only.
+#
+# The plugin is the interesting one. It normally compiles against SimHub's own
+# assemblies, which are proprietary and absent from a runner, so CI compiles it
+# against the signature-only facades in simhub/refs/ instead. That is sound
+# because SimHub's assemblies are not strong-named, so the CLR binds them by
+# simple name at runtime. See simhub/refs/README.md.
+
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: sc-api server (Windows exe)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller==6.*
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $m = [regex]::Match((Get-Content scapi/__init__.py -Raw), '__version__\s*=\s*"([^"]+)"')
+          if (-not $m.Success) { throw 'could not read __version__ from scapi/__init__.py' }
+          "version=$($m.Groups[1].Value)" >> $env:GITHUB_OUTPUT
+
+      # A real protocol test, not just an import check: start the server and
+      # drive it through the full LiveMotion lifecycle with the selftest
+      # client. Plaintext because generating a certificate is not what is
+      # being tested here.
+      - name: Protocol selftest
+        shell: pwsh
+        run: |
+          $p = Start-Process python -ArgumentList '-m','scapi.server','--plaintext','--port','51999' -PassThru
+          try {
+            Start-Sleep -Seconds 5
+            python tools/selftest.py --target 127.0.0.1:51999 --plaintext
+            if ($LASTEXITCODE -ne 0) { throw "selftest failed ($LASTEXITCODE)" }
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }
+
+      - name: Build sc-api.exe
+        run: pyinstaller --clean --noconfirm --distpath build/dist --workpath build/pyi packaging/sc-api.spec
+
+      # The frozen build has its own failure modes -- the protobuf stubs import
+      # each other by bare module name, and grpc carries a native extension --
+      # so the executable gets the same end-to-end test as the source.
+      - name: Verify the executable
+        shell: pwsh
+        run: |
+          & build/dist/sc-api.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'sc-api.exe --version failed' }
+          $p = Start-Process build/dist/sc-api.exe -ArgumentList '--plaintext','--port','51999' -PassThru
+          try {
+            Start-Sleep -Seconds 5
+            python tools/selftest.py --target 127.0.0.1:51999 --plaintext
+            if ($LASTEXITCODE -ne 0) { throw "frozen selftest failed ($LASTEXITCODE)" }
+          } finally {
+            if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force }
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sc-api-${{ steps.ver.outputs.version }}-exe
+          path: build/dist/sc-api.exe
+          if-no-files-found: error
+
+  plugin:
+    name: SimHub plugin
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # log4net and Newtonsoft.Json are strong-named, so the real signed
+      # assemblies are required and cannot be faked. Both are public.
+      # The .NET Framework 4.7.2 reference assemblies come from NuGet too,
+      # rather than relying on whatever targeting packs the runner image
+      # happens to have installed this month.
+      - name: Restore reference packages
+        shell: pwsh
+        run: |
+          nuget install log4net -Version 2.0.15 -OutputDirectory packages -NonInteractive
+          nuget install Newtonsoft.Json -Version 13.0.3 -OutputDirectory packages -NonInteractive
+          nuget install Microsoft.NETFramework.ReferenceAssemblies.net472 -Version 1.0.3 -OutputDirectory packages -NonInteractive
+
+      # Paths inside NuGet packages are discovered rather than hardcoded, so a
+      # package layout change produces a clear error instead of a missing file.
+      - name: Locate references
+        id: refs
+        shell: pwsh
+        run: |
+          function Find-One([string]$name, [string]$mustContain) {
+            $f = Get-ChildItem -Path packages -Recurse -Filter $name -File |
+                   Where-Object { $_.FullName.Contains($mustContain) } |
+                   Sort-Object FullName | Select-Object -First 1
+            if (-not $f) { throw "no $name under a path containing '$mustContain' in packages/" }
+            return $f
+          }
+          # net45 assets: the plugin targets .NET Framework, so the netstandard
+          # and .NET Core copies in these packages are the wrong ones.
+          $log4net = Find-One 'log4net.dll'         'net45'
+          $newton  = Find-One 'Newtonsoft.Json.dll' 'net45'
+          $mscor   = Find-One 'mscorlib.dll'        'v4.7.2'
+          "log4net=$($log4net.FullName)" >> $env:GITHUB_OUTPUT
+          "newtonsoft=$($newton.FullName)" >> $env:GITHUB_OUTPUT
+          "framework=$($mscor.DirectoryName)" >> $env:GITHUB_OUTPUT
+          Write-Output "log4net   : $($log4net.FullName)"
+          Write-Output "newtonsoft: $($newton.FullName)"
+          Write-Output "framework : $($mscor.DirectoryName)"
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $m = [regex]::Match((Get-Content scapi/__init__.py -Raw), '__version__\s*=\s*"([^"]+)"')
+          if (-not $m.Success) { throw 'could not read __version__ from scapi/__init__.py' }
+          "version=$($m.Groups[1].Value)" >> $env:GITHUB_OUTPUT
+
+      - name: Build SimHub reference facades
+        shell: pwsh
+        run: |
+          ./scripts/build_simhub_refs.ps1 -OutDir build/refs `
+            -FrameworkDir '${{ steps.refs.outputs.framework }}' `
+            -Log4Net '${{ steps.refs.outputs.log4net }}' `
+            -Newtonsoft '${{ steps.refs.outputs.newtonsoft }}'
+
+      - name: Build plugin
+        shell: pwsh
+        run: |
+          ./scripts/build_simhub_plugin.ps1 -RefDir build/refs `
+            -FrameworkDir '${{ steps.refs.outputs.framework }}'
+
+      # Confirms the plugin type, its SimHub attributes and the interfaces it
+      # claims are all really there. Binding against the REAL SimHub
+      # assemblies cannot be checked here -- SimHub is not installable on a
+      # runner -- so scripts/verify_simhub_plugin.ps1 does that locally.
+      # Confirms the plugin type, its SimHub attributes, the interfaces it
+      # claims and the stamped version are all really in the output. Binding
+      # against the REAL SimHub assemblies cannot be checked here, since SimHub
+      # is not installable on a runner -- the same script does that locally,
+      # without -RefDir, and that check is what proves the facades are faithful.
+      - name: Verify the built plugin
+        shell: pwsh
+        run: |
+          ./scripts/verify_simhub_plugin.ps1 -RefDir build/refs `
+            -ExpectVersion '${{ steps.ver.outputs.version }}'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScApi.SimHub-${{ steps.ver.outputs.version }}
+          path: build/ScApi.SimHub.dll
+          if-no-files-found: error
+
+  release:
+    name: Release bundle
+    needs: [api, plugin]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Assemble the bundle
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $stage = "sc-api-$version"
+          New-Item -ItemType Directory -Force $stage, "$stage/setup", "$stage/proto" | Out-Null
+
+          Copy-Item (Get-ChildItem artifacts -Recurse -Filter 'sc-api.exe').FullName $stage
+          Copy-Item (Get-ChildItem artifacts -Recurse -Filter 'ScApi.SimHub.dll').FullName $stage
+          Copy-Item docs/MANUAL.md, README.md, LICENSE.md $stage
+          Copy-Item proto/LiveMotion.proto "$stage/proto"
+
+          # The one-time setup helpers. sc-api.exe itself needs no Python;
+          # these do, which the manual says plainly. The scapi package goes in
+          # at the bundle root because the helpers resolve it as a sibling of
+          # their own directory, exactly as in the source tree -- identify.py
+          # and replay_capture.py import from it.
+          Copy-Item -Recurse scapi "$stage/scapi"
+          Remove-Item -Recurse -Force "$stage/scapi/__pycache__" -ErrorAction SilentlyContinue
+          Copy-Item requirements.txt "$stage/setup"
+          Copy-Item scripts/make_cert.sh "$stage/setup"
+          Copy-Item tools/patch_connector.py, tools/install_shakeit_effects.py, `
+                    tools/udp_listen.py, tools/identify.py, tools/replay_capture.py `
+                    "$stage/setup"
+
+          Compress-Archive -Path $stage -DestinationPath "$stage-windows.zip"
+          Get-ChildItem "$stage-windows.zip" | Format-List Name, Length
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sc-api-*-windows.zip
+          generate_release_notes: true
+          body: |
+            Windows release of **sc-api** -- an open telemetry API for Star Citizen,
+            built on the D-BOX LiveMotion protocol.
+
+            The zip contains `sc-api.exe` (no Python needed to run it),
+            `ScApi.SimHub.dll` (the SimHub plugin), the manual, and the one-time
+            setup helpers.
+
+            **Read `MANUAL.md` first.**
+
+            One prerequisite is not in this zip and never will be: `dbxLive64.dll`,
+            D-BOX's own signed gRPC client, which the game loads. It is D-BOX's
+            property and nothing of theirs is redistributed here. Install the
+            **D-BOX HaptiSync Center** to obtain it — that installer is the only
+            legitimate source. No D-BOX hardware is needed, and no D-BOX service
+            has to run afterwards.
+
+            Licensed PolyForm Noncommercial 1.0.0 — noncommercial use only.

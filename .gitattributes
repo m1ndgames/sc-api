@@ -1,0 +1,17 @@
+# Normalise text in the repository, and let Git pick the working-copy ending.
+* text=auto
+
+# Shell scripts must keep LF even on Windows: a CR at the end of a line becomes
+# part of the argument, and `sh scripts/make_cert.sh` then fails in confusing
+# ways.
+*.sh text eol=lf
+
+# PowerShell and the .proto are happier as CRLF on Windows, which is where they
+# are used exclusively.
+*.ps1 text eol=crlf
+
+# Binary, so Git never tries to translate anything.
+*.dll binary
+*.exe binary
+*.crt binary
+*.key binary
